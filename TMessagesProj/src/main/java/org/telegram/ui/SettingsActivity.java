@@ -340,7 +340,7 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
                             saveIntent.addCategory(Intent.CATEGORY_OPENABLE);
                             saveIntent.setType("application/octet-stream");
                             saveIntent.putExtra(Intent.EXTRA_TITLE, "telegram_account_" + UserConfig.getInstance(currentAccount).getClientUserId() + ".session");
-                            getParentActivity().startActivityForResult(saveIntent, TELETHON_EXPORT_REQUEST);
+                            startActivityForResult(saveIntent, TELETHON_EXPORT_REQUEST);
                         }).show();
                 }
             }
