@@ -49,6 +49,8 @@ public:
     int32_t getCurrentPingTime();
     uint32_t getCurrentDatacenterId();
     int64_t getCurrentAuthKeyId();
+    // TELETHON_STAGE2A: export only from current authorized account, explicit UI consent.
+    bool exportCurrentPermanentAuthKey(uint32_t &dcId, uint8_t key[256]);
     bool isTestBackend();
     int32_t getTimeDifference();
     int32_t sendRequest(TLObject *object, onCompleteFunc onComplete, onQuickAckFunc onQuickAck, onRequestClearFunc onClear, uint32_t flags, uint32_t datacenterId, ConnectionType connectionType, bool immediate);

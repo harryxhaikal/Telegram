@@ -535,6 +535,28 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
         return super.onFragmentCreate();
     }
 
+    // TELETHON_PATCH_STAGE1: read-only session inspection. No authorization changes.
+    private static final int TELETHON_PICK_SESSION = 43218;
+
+    private void pickTelethonSession() {
+        if (getParentActivity() == null) return;
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.setType("application/octet-stream");
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        getParentActivity().startActivityForResult(intent, TELETHON_PICK_SESSION);
+    }
+
+    private void inspectTelethonSelection(Intent data) {
+        if (getParentActivity() == null || data == null || data.getData() == null) return;
+        try {
+            TelethonSessionInspector.Info info = TelethonSessionInspector.inspect(getParentActivity(), data.getData());
+            needShowAlert("Telethon Session", "SQLite session valid (DC " + info.datacenterId + "). "
+                    + "Impor login belum diaktifkan pada tahap ini; tidak ada akun yang diubah.");
+        } catch (Exception ex) {
+            needShowAlert("Telethon Session", "File tidak dapat digunakan: " + ex.getMessage());
+        }
+    }
+
     private View cachedFragmentView;
     @Override
     public View createView(Context context) {
@@ -736,6 +758,17 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             }
         });
 
+        // TELETHON_PATCH_STAGE1: available both at initial login and Add Account.
+        if (activityMode == MODE_LOGIN) {
+            TextView importSessionButton = new TextView(context);
+            importSessionButton.setText("Import Telethon .session");
+            importSessionButton.setGravity(Gravity.CENTER);
+            importSessionButton.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+            importSessionButton.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlueText4));
+            importSessionButton.setOnClickListener(v -> pickTelethonSession());
+            sizeNotifierFrameLayout.addView(importSessionButton,
+                    LayoutHelper.createFrame(220, 44, Gravity.CENTER_HORIZONTAL | Gravity.TOP, 0, 48, 0, 0));
+        }
         backButtonView = new ImageView(context);
         backButtonView.setImageResource(R.drawable.ic_ab_back);
         backButtonView.setOnClickListener(v -> {
@@ -1148,6 +1181,11 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
 
     @Override
     public void onActivityResultFragment(int requestCode, int resultCode, Intent data) {
+        // TELETHON_PATCH_STAGE1
+        if (requestCode == TELETHON_PICK_SESSION) {
+            if (resultCode == Activity.RESULT_OK) inspectTelethonSelection(data);
+            return;
+        }
         LoginActivityRegisterView registerView = (LoginActivityRegisterView) views[VIEW_REGISTER];
         if (registerView != null) {
             registerView.imageUpdater.onActivityResult(requestCode, resultCode, data);

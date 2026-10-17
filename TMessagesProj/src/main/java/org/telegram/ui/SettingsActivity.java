@@ -155,6 +155,29 @@ import me.vkryl.android.animator.FactorAnimator;
 
 public class SettingsActivity extends BaseFragment implements NotificationCenter.NotificationCenterDelegate, ImageUpdater.ImageUpdaterDelegate, MainTabsActivity.TabFragmentDelegate, FactorAnimator.Target {
 
+    // TELETHON_STAGE2A: exports are bound to account selected when button was pressed.
+    private static final int TELETHON_EXPORT_REQUEST = 43219;
+    private int pendingTelethonExportAccount = -1;
+
+    @Override
+    public void onActivityResultFragment(int requestCode, int resultCode, Intent data) {
+        super.onActivityResultFragment(requestCode, resultCode, data);
+        if (requestCode != TELETHON_EXPORT_REQUEST) return;
+        int account = pendingTelethonExportAccount;
+        pendingTelethonExportAccount = -1;
+        if (resultCode != Activity.RESULT_OK || data == null || data.getData() == null || getParentActivity() == null) return;
+        try {
+            TelethonSessionExporter.export(getParentActivity(), data.getData(), account);
+            new AlertDialog.Builder(getParentActivity()).setTitle("Export selesai")
+                .setMessage("File .session berhasil dibuat. Jaga kerahasiaan file tersebut.")
+                .setPositiveButton(getString(R.string.OK), null).show();
+        } catch (Exception e) {
+            new AlertDialog.Builder(getParentActivity()).setTitle("Export gagal")
+                .setMessage(e.getMessage() == null ? "Terjadi kesalahan" : e.getMessage())
+                .setPositiveButton(getString(R.string.OK), null).show();
+        }
+    }
+
     private static final int ANIMATOR_ID_SEARCH_PAGE_VISIBLE = 0;
 
     private final BoolAnimator animatorSearchPageVisible = new BoolAnimator(ANIMATOR_ID_SEARCH_PAGE_VISIBLE,
@@ -304,6 +327,21 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
                     finishFragment();
                 } else if (id == 2) {
                     presentSettingFragment(new LogoutActivity());
+                } else if (id == 81) {
+                    // TELETHON_STAGE2A: Always confirm exporting a reusable account credential.
+                    if (getParentActivity() == null || !UserConfig.getInstance(currentAccount).isClientActivated()) return;
+                    new AlertDialog.Builder(getParentActivity())
+                        .setTitle("Export Telethon Session")
+                        .setMessage("File .session memberikan akses ke akun tanpa OTP. Simpan hanya di lokasi pribadi, jangan dibagikan atau diunggah ke GitHub. Lanjutkan ekspor akun ini?")
+                        .setNegativeButton(getString(R.string.Cancel), null)
+                        .setPositiveButton("Lanjutkan", (dialog, which) -> {
+                            pendingTelethonExportAccount = currentAccount;
+                            Intent saveIntent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+                            saveIntent.addCategory(Intent.CATEGORY_OPENABLE);
+                            saveIntent.setType("application/octet-stream");
+                            saveIntent.putExtra(Intent.EXTRA_TITLE, "telegram_account_" + UserConfig.getInstance(currentAccount).getClientUserId() + ".session");
+                            getParentActivity().startActivityForResult(saveIntent, TELETHON_EXPORT_REQUEST);
+                        }).show();
                 }
             }
         });
@@ -340,6 +378,8 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
         otherItem = menu.addItem(1, R.drawable.ic_ab_other);
         otherItem.setContentDescription(getString(R.string.AccDescrMoreOptions));
         otherItem.addSubItem(2, R.drawable.msg_leave, getString(R.string.LogOut));
+        // TELETHON_PATCH_STAGE1: only show placeholder; no auth key is exported.
+        otherItem.addSubItem(81, R.drawable.ic_ab_other, "Export Telethon Session");
 
         search = new ProfileActivity.SearchAdapter(this, context) {
             @Override

@@ -591,6 +591,19 @@ int64_t ConnectionsManager::getCurrentAuthKeyId() {
     return datacenter != nullptr ? datacenter->getPermanentAuthKeyId() : 0;
 }
 
+// TELETHON_STAGE2A: Use existing in-memory permanent key; never alter the session.
+bool ConnectionsManager::exportCurrentPermanentAuthKey(uint32_t &dcId, uint8_t key[256]) {
+    if (testBackend || currentUserId == 0) return false;
+    Datacenter *dc = getDatacenterWithId(currentDatacenterId);
+    if (dc == nullptr || currentDatacenterId < 1 || currentDatacenterId > 5) return false;
+    int64_t keyId = 0;
+    ByteArray *auth = dc->getAuthKey(ConnectionTypeGeneric, true, &keyId, 0);
+    if (auth == nullptr || auth->length != 256 || keyId == 0) return false;
+    dcId = currentDatacenterId;
+    memcpy(key, auth->bytes, 256);
+    return true;
+}
+
 bool ConnectionsManager::isTestBackend() {
     return testBackend;
 }

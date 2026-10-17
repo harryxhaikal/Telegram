@@ -12,6 +12,7 @@
 #include <openssl/bn.h>
 #include <openssl/pem.h>
 #include <openssl/aes.h>
+#include <openssl/crypto.h> // TELETHON_STAGE2A: OPENSSL_cleanse
 
 JavaVM *java;
 
@@ -96,6 +97,27 @@ jint getCurrentDatacenterId(JNIEnv *env, jclass c, jint instanceNum) {
 
 jlong getCurrentAuthKeyId(JNIEnv *env, jclass c, jint instanceNum) {
     return ConnectionsManager::getInstance(instanceNum).getCurrentAuthKeyId();
+}
+
+// TELETHON_STAGE2A: 4-byte LE data-center ID + 256-byte permanent auth key.
+// Only callable from explicit user-facing export action; never log the result.
+jbyteArray exportTelethonSessionKey(JNIEnv *env, jclass c, jint instanceNum) {
+    if (instanceNum < 0 || instanceNum >= MAX_ACCOUNT_COUNT) return nullptr;
+    uint8_t data[260] = {0};
+    uint32_t dcId = 0;
+    bool ok = ConnectionsManager::getInstance(instanceNum).exportCurrentPermanentAuthKey(dcId, data + 4);
+    if (!ok) {
+        OPENSSL_cleanse(data, sizeof(data));
+        return nullptr;
+    }
+    data[0] = (uint8_t) (dcId & 255);
+    data[1] = (uint8_t) ((dcId >> 8) & 255);
+    data[2] = (uint8_t) ((dcId >> 16) & 255);
+    data[3] = (uint8_t) ((dcId >> 24) & 255);
+    jbyteArray result = env->NewByteArray(sizeof(data));
+    if (result != nullptr) env->SetByteArrayRegion(result, 0, sizeof(data), reinterpret_cast<const jbyte *>(data));
+    OPENSSL_cleanse(data, sizeof(data));
+    return result;
 }
 
 jint isTestBackend(JNIEnv *env, jclass c, jint instanceNum) {
@@ -529,6 +551,7 @@ static JNINativeMethod ConnectionsManagerMethods[] = {
         {"native_getCurrentPingTime", "(I)I", (void *) getCurrentPingTime},
         {"native_getCurrentDatacenterId", "(I)I", (void *) getCurrentDatacenterId},
         {"native_getCurrentAuthKeyId", "(I)J", (void *) getCurrentAuthKeyId},
+        {"native_exportTelethonSessionKey", "(I)[B", (void *) exportTelethonSessionKey},
         {"native_isTestBackend", "(I)I", (void *) isTestBackend},
         {"native_getTimeDifference", "(I)I", (void *) getTimeDifference},
         {"native_sendRequest", "(IJIIIZII)V", (void *) sendRequest},
