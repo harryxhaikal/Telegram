@@ -54,13 +54,22 @@ public final class TelethonSessionExporter {
                 db.execSQL("INSERT INTO sessions (dc_id, server_address, port, auth_key, takeout_id) VALUES (?,?,?,?,NULL)", new Object[]{dcId, server, 443, key});
                 db.close();
                 db = null;
+                if (file.length() < 1024) {
+                    throw new IOException("Database SQLite hasil ekspor tidak lengkap");
+                }
                 try (InputStream in = new FileInputStream(file);
                      OutputStream out = context.getContentResolver().openOutputStream(destination, "w")) {
                     if (out == null) throw new IOException("Tidak bisa membuka lokasi tujuan");
                     byte[] buf = new byte[8192];
                     int n;
-                    while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
+                    long written = 0;
+                    while ((n = in.read(buf)) != -1) {
+                        out.write(buf, 0, n);
+                        written += n;
+                    }
+                    out.flush();
                     Arrays.fill(buf, (byte) 0);
+                    if (written < 1024) throw new IOException("File tujuan berisi data terlalu sedikit");
                 }
             } finally {
                 Arrays.fill(key, (byte) 0);

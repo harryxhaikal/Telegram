@@ -273,6 +273,62 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
     private static final String EXTRA_ACTION_TOKEN = "actions.fulfillment.extra.ACTION_TOKEN";
     public ArrayList<INavigationLayout> sheetFragmentsStack = new ArrayList<>();
 
+    // TELETHON_STAGE2A_ACTIVITY_RESULT_FIX: SAF dibuka dan ditangani oleh Activity yang sama.
+    private static final int TELETHON_EXPORT_DOCUMENT_REQUEST = 43219;
+    private static final String TELETHON_EXPORT_PENDING_KEY = "telethon_export_pending_account";
+    private int pendingTelethonExportAccount = -1;
+
+    /** Memulai ekspor lokal atas permintaan eksplisit dari menu Pengaturan. */
+    public void startTelethonExportForAccount(int account) {
+        if (account < 0 || account >= UserConfig.MAX_ACCOUNT_COUNT ||
+                !UserConfig.getInstance(account).isClientActivated()) {
+            showTelethonExportNotice("Export gagal", "Akun yang dipilih tidak aktif.");
+            return;
+        }
+        if (pendingTelethonExportAccount != -1) {
+            showTelethonExportNotice("Export belum selesai", "Selesaikan penyimpanan sebelumnya terlebih dahulu.");
+            return;
+        }
+        pendingTelethonExportAccount = account;
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/octet-stream");
+        intent.putExtra(Intent.EXTRA_TITLE,
+                "telegram_account_" + UserConfig.getInstance(account).getClientUserId() + ".session");
+        try {
+            startActivityForResult(intent, TELETHON_EXPORT_DOCUMENT_REQUEST);
+        } catch (Exception e) {
+            pendingTelethonExportAccount = -1;
+            FileLog.e(e);
+            showTelethonExportNotice("Export gagal", "Tidak dapat membuka pemilih lokasi penyimpanan.");
+        }
+    }
+
+    private void showTelethonExportNotice(String title, String message) {
+        if (isFinishing()) return;
+        new AlertDialog.Builder(this).setTitle(title).setMessage(message)
+                .setPositiveButton(getString(R.string.OK), null).show();
+    }
+
+    private void handleTelethonExportResult(int resultCode, Intent data) {
+        int account = pendingTelethonExportAccount;
+        pendingTelethonExportAccount = -1;
+        if (resultCode != Activity.RESULT_OK) return; // Pengguna membatalkan dialog.
+        if (account < 0 || data == null || data.getData() == null) {
+            showTelethonExportNotice("Export gagal", "Akun atau lokasi penyimpanan tidak ditemukan.");
+            return;
+        }
+        try {
+            TelethonSessionExporter.export(this, data.getData(), account);
+            showTelethonExportNotice("Export selesai",
+                    "File SQLite .session berhasil ditulis. Jaga kerahasiaannya.");
+        } catch (Exception e) {
+            FileLog.e(e);
+            showTelethonExportNotice("Export gagal",
+                    e.getMessage() == null ? "Gagal menulis database sesi." : e.getMessage());
+        }
+    }
+
     private boolean finished;
     private String videoPath;
     private String voicePath;
@@ -446,6 +502,9 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
         flagSecureReason.attach();
 
         super.onCreate(savedInstanceState);
+        if (savedInstanceState != null) {
+            pendingTelethonExportAccount = savedInstanceState.getInt(TELETHON_EXPORT_PENDING_KEY, -1);
+        }
         if (Build.VERSION.SDK_INT >= 24) {
             AndroidUtilities.isInMultiwindow = isInMultiWindowMode();
         }
@@ -6619,6 +6678,11 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == TELETHON_EXPORT_DOCUMENT_REQUEST) {
+            super.onActivityResult(requestCode, resultCode, data);
+            handleTelethonExportResult(resultCode, data);
+            return;
+        }
         if (SharedConfig.passcodeHash.length() != 0 && SharedConfig.lastPauseTime != 0) {
             SharedConfig.lastPauseTime = 0;
             if (BuildVars.LOGS_ENABLED) {
@@ -8259,6 +8323,7 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
     protected void onSaveInstanceState(Bundle outState) {
         try {
             super.onSaveInstanceState(outState);
+            outState.putInt(TELETHON_EXPORT_PENDING_KEY, pendingTelethonExportAccount);
             BaseFragment lastFragment = null;
             if (AndroidUtilities.isTablet()) {
                 if (layersActionBarLayout != null && !layersActionBarLayout.getFragmentStack().isEmpty()) {
