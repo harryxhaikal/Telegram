@@ -49,6 +49,8 @@ public:
     int32_t getCurrentPingTime();
     uint32_t getCurrentDatacenterId();
     int64_t getCurrentAuthKeyId();
+    // TELETHON_STAGE2B: For an empty account slot only; asynchronous on tgnet thread.
+    void importTelethonPermanentKey(uint32_t dcId, const uint8_t *key);
     // TELETHON_STAGE2A: export only from current authorized account, explicit UI consent.
     bool exportCurrentPermanentAuthKey(uint32_t &dcId, uint8_t key[256]);
     bool isTestBackend();

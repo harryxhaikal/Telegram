@@ -120,6 +120,22 @@ jbyteArray exportTelethonSessionKey(JNIEnv *env, jclass c, jint instanceNum) {
     return result;
 }
 
+// TELETHON_STAGE2B: Import into an unused account slot, never into an activated slot.
+jboolean importTelethonSessionKey(JNIEnv *env, jclass c, jint instanceNum, jint dcId, jbyteArray keyBytes) {
+    if (instanceNum < 0 || instanceNum >= MAX_ACCOUNT_COUNT || dcId < 1 || dcId > 5 || keyBytes == nullptr || env->GetArrayLength(keyBytes) != 256) {
+        return JNI_FALSE;
+    }
+    uint8_t key[256] = {0};
+    env->GetByteArrayRegion(keyBytes, 0, 256, reinterpret_cast<jbyte *>(key));
+    if (env->ExceptionCheck()) {
+        OPENSSL_cleanse(key, sizeof(key));
+        return JNI_FALSE;
+    }
+    ConnectionsManager::getInstance(instanceNum).importTelethonPermanentKey((uint32_t)dcId, key);
+    OPENSSL_cleanse(key, sizeof(key));
+    return JNI_TRUE;
+}
+
 jint isTestBackend(JNIEnv *env, jclass c, jint instanceNum) {
     return ConnectionsManager::getInstance(instanceNum).isTestBackend() ? 1 : 0;
 }
@@ -551,6 +567,7 @@ static JNINativeMethod ConnectionsManagerMethods[] = {
         {"native_getCurrentPingTime", "(I)I", (void *) getCurrentPingTime},
         {"native_getCurrentDatacenterId", "(I)I", (void *) getCurrentDatacenterId},
         {"native_getCurrentAuthKeyId", "(I)J", (void *) getCurrentAuthKeyId},
+        {"native_importTelethonSessionKey", "(II[B)Z", (void *) importTelethonSessionKey}, // TELETHON_STAGE2B
         {"native_exportTelethonSessionKey", "(I)[B", (void *) exportTelethonSessionKey},
         {"native_isTestBackend", "(I)I", (void *) isTestBackend},
         {"native_getTimeDifference", "(I)I", (void *) getTimeDifference},

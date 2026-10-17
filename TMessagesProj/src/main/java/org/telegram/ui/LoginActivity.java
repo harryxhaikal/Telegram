@@ -509,6 +509,8 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
 
     @Override
     public void onFragmentDestroy() {
+        // TELETHON_STAGE2B: abort unverified import if the login screen is closed.
+        stopTelethonPending(true);
         super.onFragmentDestroy();
         for (int a = 0; a < views.length; a++) {
             if (views[a] != null) {
@@ -546,15 +548,118 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
         getParentActivity().startActivityForResult(intent, TELETHON_PICK_SESSION);
     }
 
-    private void inspectTelethonSelection(Intent data) {
-        if (getParentActivity() == null || data == null || data.getData() == null) return;
-        try {
-            TelethonSessionInspector.Info info = TelethonSessionInspector.inspect(getParentActivity(), data.getData());
-            needShowAlert("Telethon Session", "SQLite session valid (DC " + info.datacenterId + "). "
-                    + "Impor login belum diaktifkan pada tahap ini; tidak ada akun yang diubah.");
-        } catch (Exception ex) {
-            needShowAlert("Telethon Session", "File tidak dapat digunakan: " + ex.getMessage());
+    // TELETHON_STAGE2B: importing never modifies another activated account.
+    private boolean telethonLoginPending = false;
+    private int telethonImportRequestId = 0;
+    private Runnable telethonImportTimeout;
+
+    private void stopTelethonPending(boolean clearKey) {
+        if (!telethonLoginPending) return;
+        telethonLoginPending = false;
+        if (telethonImportTimeout != null) {
+            AndroidUtilities.cancelRunOnUIThread(telethonImportTimeout);
+            telethonImportTimeout = null;
         }
+        if (telethonImportRequestId != 0) {
+            if (clearKey) ConnectionsManager.getInstance(currentAccount).cancelRequest(telethonImportRequestId, true);
+            telethonImportRequestId = 0;
+        }
+        if (clearKey && !UserConfig.getInstance(currentAccount).isClientActivated()) {
+            ConnectionsManager.getInstance(currentAccount).cleanup(true);
+        }
+    }
+
+    private void inspectTelethonSelection(Intent data) {
+        if (getParentActivity() == null || data == null || data.getData() == null || telethonLoginPending) return;
+        if (UserConfig.getInstance(currentAccount).isClientActivated()) {
+            needShowAlert("Telethon", "Slot ini sudah login. Pilih Tambah Akun untuk impor ke slot kosong.");
+            return;
+        }
+        final android.net.Uri selected = data.getData();
+        try {
+            TelethonSessionInspector.Info info = TelethonSessionInspector.inspect(getParentActivity(), selected);
+            new AlertDialog.Builder(getParentActivity())
+                .setTitle("Import Telethon Session")
+                .setMessage("Sesi SQLite valid pada DC " + info.datacenterId + ". Gunakan hanya akun milik sendiri. "
+                    + "Tutup Telethon yang memakai file ini dahulu karena penggunaan auth_key paralel dapat membatalkan sesi. Impor sekarang?")
+                .setNegativeButton(getString(R.string.Cancel), null)
+                .setPositiveButton("Import", (dialog, which) -> beginTelethonImport(selected))
+                .show();
+        } catch (Exception ex) {
+            needShowAlert("Telethon", "File tidak dapat digunakan: " + ex.getMessage());
+        }
+    }
+
+    private void beginTelethonImport(android.net.Uri selected) {
+        if (telethonLoginPending || getParentActivity() == null || UserConfig.getInstance(currentAccount).isClientActivated()) return;
+        TelethonSessionInspector.Info info;
+        try {
+            info = TelethonSessionInspector.readForImport(getParentActivity(), selected);
+        } catch (Exception e) {
+            needShowAlert("Import gagal", "Tidak dapat membaca sesi: " + e.getMessage());
+            return;
+        }
+        boolean queued;
+        try {
+            queued = ConnectionsManager.native_importTelethonSessionKey(currentAccount, info.datacenterId, info.authKey);
+        } catch (Exception e) {
+            queued = false;
+        } finally {
+            java.util.Arrays.fill(info.authKey, (byte) 0);
+        }
+        if (!queued) {
+            needShowAlert("Import gagal", "Native bridge menolak file sesi.");
+            return;
+        }
+        telethonLoginPending = true;
+        TLRPC.TL_users_getUsers req = new TLRPC.TL_users_getUsers();
+        req.id.add(new TLRPC.TL_inputUserSelf());
+        telethonImportTimeout = () -> {
+            if (telethonLoginPending) {
+                stopTelethonPending(true);
+                needShowAlert("Import gagal", "Server tidak merespons dalam 45 detik. Slot impor dikosongkan.");
+            }
+        };
+        AndroidUtilities.runOnUIThread(telethonImportTimeout, 45000);
+        telethonImportRequestId = ConnectionsManager.getInstance(currentAccount).sendRequest(req, (response, error) -> {
+            AndroidUtilities.runOnUIThread(() -> {
+                if (!telethonLoginPending) return;
+                if (getParentActivity() == null) {
+                    stopTelethonPending(true);
+                    return;
+                }
+                if (error != null) {
+                    String msg = error.text == null ? "Sesi tidak diterima oleh server" : error.text;
+                    stopTelethonPending(true);
+                    needShowAlert("Import gagal", "Server Telegram: " + msg);
+                    return;
+                }
+                TLRPC.User user = null;
+                if (response instanceof org.telegram.tgnet.Vector) {
+                    org.telegram.tgnet.Vector<?> result = (org.telegram.tgnet.Vector<?>) response;
+                    if (!result.objects.isEmpty() && result.objects.get(0) instanceof TLRPC.User) {
+                        user = (TLRPC.User) result.objects.get(0);
+                    }
+                }
+                if (user == null || user.id <= 0 || user instanceof TLRPC.TL_userEmpty) {
+                    stopTelethonPending(true);
+                    needShowAlert("Import gagal", "Server tidak mengonfirmasi identitas akun.");
+                    return;
+                }
+                for (int i = 0; i < UserConfig.MAX_ACCOUNT_COUNT; ++i) {
+                    if (i != currentAccount && UserConfig.getInstance(i).isClientActivated()
+                            && UserConfig.getInstance(i).getClientUserId() == user.id) {
+                        stopTelethonPending(true);
+                        needShowAlert("Akun sudah ada", "Akun ini sudah login pada slot lain.");
+                        return;
+                    }
+                }
+                stopTelethonPending(false);
+                TLRPC.TL_auth_authorization authorization = new TLRPC.TL_auth_authorization();
+                authorization.user = user;
+                onAuthSuccess(authorization);
+            });
+        }, ConnectionsManager.RequestFlagWithoutLogin | ConnectionsManager.RequestFlagFailOnServerErrors);
     }
 
     private View cachedFragmentView;

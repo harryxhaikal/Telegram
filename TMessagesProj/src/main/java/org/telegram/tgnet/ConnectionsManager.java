@@ -1011,6 +1011,8 @@ public class ConnectionsManager extends BaseController {
     public static native int native_getCurrentPingTime(int currentAccount);
     public static native int native_getCurrentDatacenterId(int currentAccount);
     public static native long native_getCurrentAuthKeyId(int currentAccount);
+    // TELETHON_STAGE2B: Must be followed by server verification before UI login.
+    public static native boolean native_importTelethonSessionKey(int currentAccount, int dcId, byte[] key);
     // TELETHON_STAGE2A: only use after explicit confirmation by account owner.
     public static native byte[] native_exportTelethonSessionKey(int currentAccount);
     public static native int native_getTimeDifference(int currentAccount);

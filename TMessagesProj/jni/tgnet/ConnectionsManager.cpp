@@ -15,6 +15,9 @@
 #include <fcntl.h>
 #include <memory.h>
 #include <openssl/rand.h>
+#include <openssl/sha.h>    // TELETHON_STAGE2B: MTProto permanent auth_key_id
+#include <openssl/crypto.h> // TELETHON_STAGE2B: securely clear transient secrets
+#include <array>
 #include <zlib.h>
 #include <memory>
 #include <string>
@@ -2023,6 +2026,38 @@ void ConnectionsManager::bindRequestToGuid(int32_t requestToken, int32_t guid) {
 void ConnectionsManager::setUserPremium(bool premium) {
     scheduleTask([&, premium] {
         currentUserPremium = premium;
+    });
+}
+
+// TELETHON_STAGE2B: Only the network worker mutates tgnet state.
+// JNI enqueues this immediately before users.getUsers, preserving FIFO ordering.
+void ConnectionsManager::importTelethonPermanentKey(uint32_t dcId, const uint8_t *key) {
+    struct Secret {
+        std::array<uint8_t, 256> bytes{};
+        ~Secret() { OPENSSL_cleanse(bytes.data(), bytes.size()); }
+    };
+    auto secret = std::make_shared<Secret>();
+    memcpy(secret->bytes.data(), key, secret->bytes.size());
+    scheduleTask([this, dcId, secret] {
+        // Do not overwrite an authorized Android account or a test-backend session.
+        if (currentUserId != 0 || testBackend) return;
+        Datacenter *dc = getDatacenterWithId(dcId);
+        if (dc == nullptr) return; // Pre-login slots usually already have an unregistered key
+        uint8_t digest[SHA_DIGEST_LENGTH];
+        SHA1(secret->bytes.data(), secret->bytes.size(), digest);
+        uint64_t keyId = 0;
+        memcpy(&keyId, digest + 12, sizeof(keyId));
+        OPENSSL_cleanse(digest, sizeof(digest));
+        dc->clearAuthKey(HandshakeTypeAll);
+        dc->authKeyPerm = new ByteArray(secret->bytes.data(), 256);
+        dc->authKeyPermId = (int64_t) keyId;
+        dc->authorized = false;
+        dc->lastInitVersion = 0;
+        dc->lastInitMediaVersion = 0;
+        dc->recreateSessions(HandshakeTypeAll);
+        currentDatacenterId = dcId;
+        movingToDatacenterId = DEFAULT_DATACENTER_ID;
+        saveConfig();
     });
 }
 
